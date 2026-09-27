@@ -13,6 +13,9 @@ Magnus 公式露点与表面温度冷凝裕量的**冷凝风险窗口**检测
 （condensation risk，只读），以及**展柜扰动恢复分析**（recovery）：
 以事件前窗口温湿度中位数为基线，事件后按分段线性曲线精确求双维
 进入/离开容差带交点，两维同时在带连续保持达标方判恢复（只读），以及
+**展柜采样覆盖率审计**（sampling coverage）：以查询起点为首个应采时刻
+按周期生成应采时隙，容差扩展范围内的已合并读数与时隙一对一匹配，
+输出覆盖率与连续缺测缺口（只读），以及
 **展柜采集质量审计**（reading outliers）：按相邻读数间隔切断序列，
 以同段左右邻点的中位数与 MAD 稳健尺度定位孤立异常温湿度读数（只读）。
 
@@ -441,6 +444,61 @@ curl 'http://localhost:8080/api/v1/cases/CASE-007/reading-outliers?window_size=5
 （同时间戳重复上报已按累计均值并入），接口**只读**：不写库、不改
 分段快照、不推进版本号。
 
+### 14. 展柜采样覆盖率审计
+
+`GET /api/v1/cases/{sn}/sampling-coverage` 审计展柜实际采样是否跟上
+期望的采样节拍（只读，不写库、不改版本号）：以查询起点 `start` 为
+**首个应采时刻**，按周期 `period_seconds` 生成**不晚于** `end` 的应采
+时隙（`t_i = start + i·period`，`t_i ≤ end`，至少一个）；再读取
+**容差扩展范围** `[start − tolerance, 末时隙 + tolerance]` 内的
+**已合并**读数，按时间顺序做**一对一**贪心匹配：
+
+- 读数可覆盖时隙 `t_i` 当且仅当 `|读数时刻 − t_i| ≤ tolerance_seconds`
+  （**含等于**）；
+- 每条读数最多覆盖一个时隙，每个时隙最多接收一条读数；
+- 每条读数优先匹配其容差窗口内**最早**（时刻最小）的未覆盖时隙。
+
+返回应采时隙数、已覆盖时隙数、覆盖率（= 已覆盖 / 应采），以及把
+**连续缺测时隙**合并后的缺口列表：每个缺口给出首个/末个缺测时隙的
+时刻与缺测时隙数，按起点时刻升序。
+
+| 参数 | 必填 | 说明 |
+| --- | --- | --- |
+| `start` / `end` | 是 | 含端点的 ISO8601 时间窗；`start` 为首个应采时刻，时隙不晚于 `end` |
+| `period_seconds` | 是 | 采样周期（秒，**> 0**） |
+| `tolerance_seconds` | 是 | 匹配容差（秒，**0 ≤ 容差 < 周期**） |
+
+```bash
+curl 'http://localhost:8080/api/v1/cases/CASE-007/sampling-coverage?start=2026-09-01T00:00:00Z&end=2026-09-01T01:00:00Z&period_seconds=600&tolerance_seconds=60'
+```
+
+响应示例（00:20 与 00:30 两个连续缺测时隙合并为一个缺口）：
+
+```json
+{
+  "device_sn": "CASE-007",
+  "start": "2026-09-01T00:00:00Z",
+  "end": "2026-09-01T01:00:00Z",
+  "period_seconds": 600.0,
+  "tolerance_seconds": 60.0,
+  "expected_count": 7,
+  "covered_count": 5,
+  "coverage": 0.7142857142857143,
+  "gap_count": 1,
+  "gaps": [
+    {
+      "start_ts": "2026-09-01T00:20:00Z",
+      "end_ts": "2026-09-01T00:30:00Z",
+      "missing_slots": 2
+    }
+  ]
+}
+```
+
+`start` 晚于 `end`、`period_seconds ≤ 0`、`tolerance_seconds < 0` 或
+**不小于周期**（≥ 周期）均返回 `422`；展柜没有读数返回 `404`。
+接口**只读**：不写库、不改分段快照、不推进版本号。
+
 ---
 
 ## 接口一览
@@ -457,6 +515,7 @@ curl 'http://localhost:8080/api/v1/cases/CASE-007/reading-outliers?window_size=5
 | GET  | `/api/v1/cases/{sn}/condensation-risk` | 冷凝风险：Magnus 露点 + 表面温度裕量，线性插值精确窗口、断档/零湿度断开 |
 | GET  | `/api/v1/cases/{sn}/recovery` | 扰动恢复：事件前中位数基线 + 事件后双维容差带精确交点，连续保持达标方判恢复（只读） |
 | GET  | `/api/v1/cases/{sn}/reading-outliers` | 采集质量审计：断档切段 + 邻点中位数/MAD 定位孤立异常读数（只读） |
+| GET  | `/api/v1/cases/{sn}/sampling-coverage` | 采样覆盖率审计：周期应采时隙 + 容差内一对一匹配 + 连续缺测缺口（只读） |
 | GET  | `/api/v1/incidents` | 跨展柜共模突变：非基线段首候选窗 + 全局最优互不重叠选择 |
 | GET  | `/api/v1/propagation` | 跨展柜环境传播：重叠时段固定步长插值 + 正负时滞皮尔逊相关（只读） |
 | POST | `/api/v1/anchors` | 登记/更新锚点并重放 |

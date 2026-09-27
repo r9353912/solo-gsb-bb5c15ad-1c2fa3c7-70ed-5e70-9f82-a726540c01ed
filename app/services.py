@@ -15,6 +15,7 @@ from . import incidents as inc
 from . import outliers as ol
 from . import propagation as prop
 from . import recovery as rec
+from . import sampling as samp
 from . import segmentation as seg
 from . import timeline as tl
 from .config import settings
@@ -40,6 +41,8 @@ from .schemas import (
     ReadingOutliersOut,
     RecoveryBaselineOut,
     RecoveryOut,
+    SamplingCoverageOut,
+    SamplingGapOut,
     SegmentOut,
     SegmentationOut,
     TimelineOut,
@@ -840,6 +843,54 @@ def build_case_reading_outliers(
                 ],
             )
             for o in result.outliers
+        ],
+    )
+
+
+# ---------- 采样覆盖率审计 ----------
+
+
+def build_case_sampling_coverage(
+    db: Session,
+    device_sn: str,
+    start: dt.datetime,
+    end: dt.datetime,
+    period_seconds: float,
+    tolerance_seconds: float,
+) -> SamplingCoverageOut | None:
+    """周期时隙采样覆盖率与连续缺测缺口（只读计算，不落库）。
+
+    设备没有任何读数时返回 ``None``（由上层判 404）。时隙生成、
+    容差扩展范围过滤与一对一贪心匹配全部委托 :mod:`app.sampling`。
+    """
+    samples = _load_samples(db, device_sn)
+    if not samples:
+        return None
+
+    result = samp.compute_sampling_coverage(
+        samples,
+        start=start,
+        end=end,
+        period_seconds=period_seconds,
+        tolerance_seconds=tolerance_seconds,
+    )
+    return SamplingCoverageOut(
+        device_sn=device_sn,
+        start=start,
+        end=end,
+        period_seconds=period_seconds,
+        tolerance_seconds=tolerance_seconds,
+        expected_count=result.expected_count,
+        covered_count=result.covered_count,
+        coverage=result.coverage,
+        gap_count=len(result.gaps),
+        gaps=[
+            SamplingGapOut(
+                start_ts=g.start_ts,
+                end_ts=g.end_ts,
+                missing_slots=g.missing_slots,
+            )
+            for g in result.gaps
         ],
     )
 
