@@ -434,6 +434,30 @@ class ReadingOutliersOut(BaseModel):
     )
 
 
+class SamplingCoverageGapOut(BaseModel):
+    start_ts: dt.datetime = Field(..., description="缺口首个缺测时隙的应采时刻（UTC）")
+    end_ts: dt.datetime = Field(..., description="缺口末个缺测时隙的应采时刻（UTC）")
+    missing_count: int = Field(..., description="该缺口内连续缺测的时隙数")
+
+
+class SamplingCoverageOut(BaseModel):
+    device_sn: str
+    start: dt.datetime = Field(..., description="首个应采时刻（UTC）")
+    end: dt.datetime = Field(..., description="时隙不晚于该时刻（UTC，含等于）")
+    period_seconds: float = Field(..., description="采样周期（秒）")
+    tolerance_seconds: float = Field(
+        ..., description="匹配容差（秒）：|读数时刻 − 时隙时刻| ≤ 该值（含等于）可覆盖"
+    )
+    expected_count: int = Field(
+        ..., description="应采数：floor((end − start) / period) + 1 个时隙"
+    )
+    covered_count: int = Field(..., description="已覆盖数：匹配到读数的时隙数")
+    missing_count: int = Field(..., description="缺测数 = expected_count − covered_count")
+    coverage_ratio: float = Field(..., description="覆盖率 = covered_count / expected_count")
+    gap_count: int = Field(..., description="连续缺测时隙合并后的缺口数")
+    gaps: list[SamplingCoverageGapOut] = Field(..., description="缺口列表，按时间升序")
+
+
 class HealthOut(BaseModel):
     status: str
     db: str

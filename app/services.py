@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 
 from . import calibration as cal
 from . import condensation as cond
+from . import coverage as cov
 from . import excursions as exc
 from . import incidents as inc
 from . import outliers as ol
@@ -40,6 +41,8 @@ from .schemas import (
     ReadingOutliersOut,
     RecoveryBaselineOut,
     RecoveryOut,
+    SamplingCoverageGapOut,
+    SamplingCoverageOut,
     SegmentOut,
     SegmentationOut,
     TimelineOut,
@@ -840,6 +843,55 @@ def build_case_reading_outliers(
                 ],
             )
             for o in result.outliers
+        ],
+    )
+
+
+# ---------- 采样覆盖率 ----------
+
+
+def build_case_sampling_coverage(
+    db: Session,
+    device_sn: str,
+    start: dt.datetime,
+    end: dt.datetime,
+    period_seconds: float,
+    tolerance_seconds: float,
+) -> SamplingCoverageOut | None:
+    """周期时隙与已合并读数的一对一容差匹配（只读计算，不落库）。
+
+    设备没有任何读数时返回 ``None``（由上层判 404）。时隙生成、容差
+    匹配与缺口合并全部委托 :mod:`app.coverage`。
+    """
+    samples = _load_samples(db, device_sn)
+    if not samples:
+        return None
+
+    result = cov.compute_sampling_coverage(
+        samples,
+        start=start,
+        end=end,
+        period_seconds=period_seconds,
+        tolerance_seconds=tolerance_seconds,
+    )
+    return SamplingCoverageOut(
+        device_sn=device_sn,
+        start=start,
+        end=end,
+        period_seconds=period_seconds,
+        tolerance_seconds=tolerance_seconds,
+        expected_count=result.expected_count,
+        covered_count=result.covered_count,
+        missing_count=result.expected_count - result.covered_count,
+        coverage_ratio=result.covered_count / result.expected_count,
+        gap_count=len(result.gaps),
+        gaps=[
+            SamplingCoverageGapOut(
+                start_ts=g.start_ts,
+                end_ts=g.end_ts,
+                missing_count=g.missing_count,
+            )
+            for g in result.gaps
         ],
     )
 

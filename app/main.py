@@ -32,6 +32,7 @@ from .schemas import (
     ReadingOutliersOut,
     RecoveryOut,
     ReplayPreviewResponse,
+    SamplingCoverageOut,
     SegmentationOut,
     TimelineOut,
 )
@@ -68,9 +69,12 @@ app = FastAPI(
         "并提供展柜扰动恢复分析：以事件前温湿度中位数为基线，事件后按分段"
         "线性曲线精确求双维进入/离开容差带交点，两维同时在带连续保持达标"
         "方判恢复（只读）；并提供展柜采集质量审计：按断档切段，以邻点"
-        "中位数与 MAD 稳健尺度定位孤立异常温湿度读数（只读）。"
+        "中位数与 MAD 稳健尺度定位孤立异常温湿度读数（只读）；并提供展柜"
+        "采样覆盖率评估：以起点为首个应采时刻按周期生成时隙，容差扩展范围"
+        "内已合并读数按时间顺序一对一匹配（优先最早可覆盖时隙），连续缺测"
+        "时隙合并为缺口（只读）。"
     ),
-    version="1.8.0",
+    version="1.9.0",
     lifespan=lifespan,
 )
 
@@ -558,6 +562,42 @@ def get_reading_outliers(
         min_temperature_delta=min_temperature_delta,
         min_humidity_delta=min_humidity_delta,
         max_gap_seconds=max_gap_seconds,
+    )
+    if out is None:
+        raise HTTPException(status_code=404, detail="展柜不存在或尚无读数")
+    return out
+
+
+# ---------- 采样覆盖率 ----------
+
+
+@app.get(
+    "/api/v1/cases/{device_sn}/sampling-coverage",
+    response_model=SamplingCoverageOut,
+    tags=["cases"],
+    summary="采样覆盖率：周期时隙 + 容差一对一匹配，连续缺测合并为缺口（只读）",
+)
+def get_sampling_coverage(
+    device_sn: str,
+    start: dt.datetime = Query(..., description="起始时间（含），ISO8601；即首个应采时刻"),
+    end: dt.datetime = Query(..., description="结束时间（含），ISO8601；时隙不晚于该时刻"),
+    period_seconds: float = Query(..., gt=0.0, description="采样周期（秒，必须为正）"),
+    tolerance_seconds: float = Query(
+        ..., ge=0.0, description="匹配容差（秒）：0 ≤ 容差 < 采样周期"
+    ),
+    db: Session = Depends(get_db),
+):
+    start_utc = _parse_ts(start)
+    end_utc = _parse_ts(end)
+    if start_utc > end_utc:
+        raise HTTPException(status_code=422, detail="start 不能晚于 end")
+    if tolerance_seconds >= period_seconds:
+        raise HTTPException(
+            status_code=422, detail="tolerance_seconds 必须小于 period_seconds"
+        )
+
+    out = services.build_case_sampling_coverage(
+        db, device_sn, start_utc, end_utc, period_seconds, tolerance_seconds
     )
     if out is None:
         raise HTTPException(status_code=404, detail="展柜不存在或尚无读数")
